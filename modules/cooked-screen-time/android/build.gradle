@@ -1,0 +1,21 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'com.cooked.screentime'
+version = '1.0.0'
+
+android {
+    namespace 'com.cooked.screentime'
+
+    compileSdkVersion rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+    }
+}
+
+dependencies {
+    implementation project(':expo-modules-core')
+    implementation 'androidx.core:core-ktx:1.12.0'
+}
