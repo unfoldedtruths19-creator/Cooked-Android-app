@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Card, Eyebrow, GhostButton, Screen, StatTile } from '@/components/app/ui';
 import { formatMinutes } from '@/data/mock';
@@ -8,6 +9,7 @@ import { colors, font, space } from '@/theme/tokens';
 import { useScreenTimeStore } from '@/state/useScreenTimeStore';
 import { useBlockedAppsStore } from '@/state/useBlockedAppsStore';
 import { supabase } from '@/lib/supabase';
+import { scheduleDailyRoast, scheduleInactivityRoasts } from '@/lib/notifications';
 
 const APP_DISPLAY: Record<string, string> = {
   instagram: 'Instagram', youtube: 'YouTube', tiktok: 'TikTok',
@@ -16,7 +18,7 @@ const APP_DISPLAY: Record<string, string> = {
 
 export function ProfileScreen() {
   const router = useRouter();
-  const { todayStats, loadState } = useScreenTimeStore();
+  const { todayStats, weeklyFocus, loadState } = useScreenTimeStore();
   const { blockedApps } = useBlockedAppsStore();
   const [email, setEmail] = useState('');
   const [strictMode, setStrictMode] = useState(true);
@@ -28,6 +30,11 @@ export function ProfileScreen() {
       if (data?.user?.email) setEmail(data.user.email);
     });
     useBlockedAppsStore.getState().loadBlockedApps();
+    
+    // Load preferences
+    AsyncStorage.getItem('prefs_daily_roast').then(val => {
+      if (val !== null) setDailyRoast(val === 'true');
+    });
   }, []);
 
   const isLoading = loadState === 'loading' || loadState === 'idle';
@@ -35,6 +42,15 @@ export function ProfileScreen() {
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace('/');
+  }
+
+  async function toggleDailyRoast(value: boolean) {
+    setDailyRoast(value);
+    await AsyncStorage.setItem('prefs_daily_roast', String(value));
+    if (todayStats) {
+      await scheduleDailyRoast(todayStats, weeklyFocus, value);
+    }
+    await scheduleInactivityRoasts(value);
   }
 
   const blockedDisplay = blockedApps
@@ -84,7 +100,7 @@ export function ProfileScreen() {
             </View>
             <Switch
               value={dailyRoast}
-              onValueChange={setDailyRoast}
+              onValueChange={toggleDailyRoast}
               thumbColor={colors.text}
               trackColor={{ true: colors.spring, false: colors.line }}
             />

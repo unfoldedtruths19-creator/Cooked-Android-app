@@ -1,16 +1,19 @@
 import { create } from 'zustand';
 import {
   fetchDailySummaries,
-  fetchTodayFocusMinutes,
+  fetchTodayFocusStats,
   fetchStreakDays,
   fetchTodayDistractions,
+  fetchJourneyDay,
   deriveTodayStats,
   deriveWeekEntries,
   deriveAppBreakdown,
+  fetchWeeklyFocusStats,
   type TodayStats,
   type WeekEntry,
   type AppBreakdownEntry,
   type DailySummary,
+  type WeeklyFocusDay,
 } from '@/lib/screenTimeData';
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -25,6 +28,8 @@ interface ScreenTimeState {
   // Derived — these are what screens read
   todayStats: TodayStats | null;
   weekEntries: WeekEntry[];
+  weeklyFocus: WeeklyFocusDay[];
+  previousWeeklyFocus: WeeklyFocusDay[];
   appBreakdown: AppBreakdownEntry[];
 
   // Actions
@@ -37,8 +42,11 @@ const EMPTY_TODAY: TodayStats = {
   focusMinutes: 0,
   pickups: 0,
   distractions: 0,
+  abandonedCount: 0,
+  completedCount: 0,
   cookedScore: 0,
   streakDays: 0,
+  journeyDay: 1,
   changeVsYesterday: 0,
   topApp: null,
 };
@@ -49,6 +57,8 @@ export const useScreenTimeStore = create<ScreenTimeState>((set, get) => ({
   summaries: [],
   todayStats: null,
   weekEntries: [],
+  weeklyFocus: [],
+  previousWeeklyFocus: [],
   appBreakdown: [],
 
   load: async () => {
@@ -60,19 +70,23 @@ export const useScreenTimeStore = create<ScreenTimeState>((set, get) => ({
   refresh: async () => {
     set({ loadState: 'loading', errorMessage: null });
     try {
-      const [summaries, focusMinutes, streakDays, distractions] = await Promise.all([
+      const [summaries, focusStats, streakDays, distractions, journeyDay, weeklyFocus, previousWeeklyFocus] = await Promise.all([
         fetchDailySummaries(7),
-        fetchTodayFocusMinutes(),
+        fetchTodayFocusStats(),
         fetchStreakDays(),
         fetchTodayDistractions(),
+        fetchJourneyDay(),
+        fetchWeeklyFocusStats(0),
+        fetchWeeklyFocusStats(1),
       ]);
 
-      const todayStats    = deriveTodayStats(summaries, focusMinutes, streakDays, distractions);
+      const todayStats    = deriveTodayStats(summaries, focusStats, streakDays, distractions, journeyDay);
       const weekEntries   = deriveWeekEntries(summaries);
       const appBreakdown  = deriveAppBreakdown(summaries[0] ?? null);
 
-      set({ loadState: 'ready', summaries, todayStats, weekEntries, appBreakdown });
+      set({ loadState: 'ready', summaries, todayStats, weekEntries, weeklyFocus, previousWeeklyFocus, appBreakdown });
     } catch (e) {
+      console.error('Failed to load screen time stats:', e);
       const msg = e instanceof Error ? e.message : 'Failed to load your stats.';
       set({ loadState: 'error', errorMessage: msg, todayStats: EMPTY_TODAY });
     }

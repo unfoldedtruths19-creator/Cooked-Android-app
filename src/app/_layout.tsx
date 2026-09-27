@@ -5,9 +5,11 @@ import { Stack } from 'expo-router/stack';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 
 import { colors } from '@/theme/tokens';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
+import { handleAppLaunch } from '@/lib/notifications';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -20,6 +22,22 @@ function AppContent({ fontsLoaded }: { fontsLoaded: boolean }) {
     }
   }, [fontsLoaded, isLoading]);
 
+  useEffect(() => {
+    // Call on initial mount
+    handleAppLaunch().catch(console.error);
+
+    // Call when app comes to foreground
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        handleAppLaunch().catch(console.error);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   if (!fontsLoaded) return null;
 
   return (
@@ -27,7 +45,24 @@ function AppContent({ fontsLoaded }: { fontsLoaded: boolean }) {
       <StatusBar style="light" />
       <Stack
         screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.ink } }}
-      />
+      >
+        {/* Auth screens — prevent Back from returning here after login */}
+        <Stack.Screen name="index" options={{ animation: 'none', gestureEnabled: false }} />
+        <Stack.Screen name="login" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="verify" options={{ animation: 'fade' }} />
+
+        {/* Permission / sync / onboarding — no back into auth */}
+        <Stack.Screen name="permission" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="permission-fallback" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="sync-loading" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
+
+        {/* Main app routes */}
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="focus-setup" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="roast" options={{ animation: 'fade' }} />
+        <Stack.Screen name="circles" options={{ animation: 'slide_from_right' }} />
+      </Stack>
     </>
   );
 }

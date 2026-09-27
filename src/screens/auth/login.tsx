@@ -70,10 +70,6 @@ export function LoginScreen() {
 
   function goToSignUp() {
     tap(Haptics.ImpactFeedbackStyle.Light);
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
     router.replace('/');
   }
 

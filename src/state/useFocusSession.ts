@@ -59,6 +59,24 @@ export function getRoastFromSummary(summary: SessionSummary): {
   };
 }
 
+export function getRandomAbandonmentRoast(plannedMins: number, actualMins: number) {
+  const roasts = [
+    "Bro is running on NPC mode. Zero productivity detected 💀",
+    "Are you a human or a bot? Even bots finish their tasks 🤖",
+    "Bro opened his phone for one thing and forgot his entire mission 😂",
+    "Your focus needs a software update 💀",
+    "Another distraction? Bro's attention span is on vacation.",
+    "Bro's goals are in 4K, but his effort is running at 144p 🤡",
+    `${plannedMins} minutes? Bro couldn't even survive the intro 💀`,
+  ];
+  const body = roasts[Math.floor(Math.random() * roasts.length)];
+  return {
+    hook: 'WEAK.',
+    body,
+    kicker: 'Lock in or log out.',
+  };
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useFocusSession() {

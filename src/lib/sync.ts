@@ -24,9 +24,15 @@ export async function runIncrementalSync(): Promise<{ inserted: number } | null>
   const sessions = await getUsageSessions(since);
 
   if (sessions.length === 0) {
-    // Nothing new (or native module unavailable) — still advance the
-    // watermark so we don't keep re-querying the same 30-day window forever.
-    await AsyncStorage.setItem(LAST_SYNC_KEY, String(syncStartedAt));
+    // Nothing new (or native module unavailable).
+    // Only advance the watermark on the initial 30-day lookback so we don't
+    // keep re-querying a huge window on a fresh install with no data.
+    // For all subsequent syncs, leave the watermark where it is — the next
+    // sync will re-check from the same point, preventing data from being
+    // silently skipped if the phone hasn't produced sessions yet.
+    if (!storedSince) {
+      await AsyncStorage.setItem(LAST_SYNC_KEY, String(syncStartedAt));
+    }
     return { inserted: 0 };
   }
 

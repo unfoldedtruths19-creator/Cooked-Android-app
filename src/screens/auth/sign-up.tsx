@@ -68,7 +68,7 @@ export function SignUpScreen() {
     }
 
     setSubmitted(true);
-    router.push({ pathname: '/verify', params: { email: email.trim() } });
+    // AuthProvider will automatically route to the next screen upon successful sign up.
   }
 
   return (
@@ -139,7 +139,7 @@ export function SignUpScreen() {
 
       {submitted ? (
         <Text style={styles.confirmation}>
-          Account created. Check your email if verification is required.
+          Account created. Logging you in...
         </Text>
       ) : null}
     </AuthShell>

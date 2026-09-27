@@ -20,9 +20,9 @@ type AuthShellProps = {
   title: string;
   subtitle: string;
   children: ReactNode;
-  footerText: string;
-  footerAction: string;
-  onFooterPress: () => void;
+  footerText?: string;
+  footerAction?: string;
+  onFooterPress?: () => void;
 };
 
 /**
@@ -87,18 +87,22 @@ export function AuthShell({
               </View>
             </View>
 
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>{footerText} </Text>
-              <Pressable
-                accessibilityRole="link"
-                accessibilityLabel={footerAction}
-                hitSlop={12}
-                onPress={onFooterPress}
-                style={({ pressed }) => (pressed ? styles.footerPressed : null)}
-              >
-                <Text style={styles.footerLink}>{footerAction}</Text>
-              </Pressable>
-            </View>
+            {footerText || footerAction ? (
+              <View style={styles.footer}>
+                {footerText && <Text style={styles.footerText}>{footerText} </Text>}
+                {footerAction && (
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel={footerAction}
+                    hitSlop={12}
+                    onPress={onFooterPress}
+                    style={({ pressed }) => (pressed ? styles.footerPressed : null)}
+                  >
+                    <Text style={styles.footerLink}>{footerAction}</Text>
+                  </Pressable>
+                )}
+              </View>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

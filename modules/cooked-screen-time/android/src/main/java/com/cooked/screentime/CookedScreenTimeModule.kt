@@ -291,10 +291,26 @@ class CookedScreenTimeModule : Module() {
     private fun getForegroundPackage(): String? {
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
-        return usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 5_000, now)
-            ?.filter { it.lastTimeUsed > 0 }
-            ?.maxByOrNull { it.lastTimeUsed }
-            ?.packageName
+        // queryEvents is much more accurate for real-time foreground detection
+        // than queryUsageStats, which can be delayed or bucketed.
+        val events = usm.queryEvents(now - 10_000, now)
+        var foregroundPkg: String? = null
+        var hasEvent = false
+        val event = android.app.usage.UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                foregroundPkg = event.packageName
+                hasEvent = true
+            } else if (event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_BACKGROUND) {
+                // If the app backgrounding is what we currently think is foreground, clear it.
+                if (foregroundPkg == event.packageName || foregroundPkg == null) {
+                    foregroundPkg = null
+                    hasEvent = true
+                }
+            }
+        }
+        return if (hasEvent) foregroundPkg else lastForeground
     }
 
     private fun getBlockedPackages(): Set<String> {
@@ -331,21 +347,30 @@ class CookedScreenTimeModule : Module() {
 
     // ─── Notifications ────────────────────────────────────────────────────────
 
+    private var lastRoastTime: Long = 0
+    private var roastCount: Int = 0
+
     private fun fireRoastNotification(isBrowser: Boolean) {
+        val now = System.currentTimeMillis()
+        if (now - lastRoastTime < 30_000) return // 30s cooldown
+        if (roastCount >= 5) return // max 5 roasts per session
+        lastRoastTime = now
+        roastCount++
+
         val task = prefs.getString("current_task", "") ?: ""
 
-        val title = if (isBrowser) "nice try with the browser 💀" else "🔥 COOKED"
+        val title = "BRO 💀"
         val bodyLines = if (isBrowser) listOf(
-            "browser speedrun any%",
-            "bro really thought we wouldn't notice",
-            "incognito mode won't save you here",
+            "Tried the browser trick? NPC behavior 🤖",
+            "Incognito mode won't save your attention span 😂",
+            "Browser speedrun any%? Do your work noob."
         ) else listOf(
-            "really? right now?",
-            "your future self is disappointed.",
-            "bro the session isn't even over 💀",
-            "this is why you're cooked.",
-            "okay we see you. go back.",
-            "focus diff: 0 ❌",
+            "Another distraction? Your focus just rage-quit.",
+            "Are you a human or a bot? Even bots finish their tasks 🤖",
+            "Bro opened his phone for one thing and forgot his entire mission 😂",
+            "Your focus needs a software update 💀",
+            "Bro's attention span is on vacation.",
+            "Bro's goals are in 4K, but his effort is running at 144p 🤡"
         )
 
         val body = if (task.isNotBlank()) {

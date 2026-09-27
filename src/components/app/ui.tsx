@@ -49,7 +49,7 @@ export function Glass({
   raised,
 }: {
   children?: ReactNode;
-  style?: ViewStyle | ViewStyle[];
+  style?: import('react-native').StyleProp<import('react-native').ViewStyle>;
   intensity?: number;
   raised?: boolean;
 }) {
@@ -61,9 +61,9 @@ export function Glass({
   );
 }
 
-export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+export function Card({ children, style }: { children: ReactNode; style?: import('react-native').StyleProp<import('react-native').ViewStyle> }) {
   return (
-    <Glass style={[styles.card, style as ViewStyle]}>
+    <Glass style={[styles.card, style]}>
       <View style={styles.cardInner}>{children}</View>
     </Glass>
   );

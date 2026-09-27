@@ -16,10 +16,21 @@ export interface TodayStats {
   focusMinutes:       number;
   pickups:            number;    // session_count for today
   distractions:       number;    // blocked attempts during focus
+  abandonedCount:     number;    // abandoned focus sessions today
+  completedCount:     number;    // completed focus sessions today
   cookedScore:        number;    // 0-100
   streakDays:         number;
+  journeyDay:         number;
   changeVsYesterday:  number;    // percent, negative = improvement
   topApp: { name: string; minutes: number; opens: number } | null;
+}
+
+export interface WeeklyFocusDay {
+  date: string;
+  dayName: string;
+  focusMinutes: number;
+  sessionCount: number;
+  status: 'upcoming' | 'missed' | 'completed' | 'in_progress';
 }
 
 export interface WeekEntry {
@@ -57,6 +68,13 @@ function localDayEnd(date = new Date()): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0);
 }
 
+function getLocalMonday(date = new Date()): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.getFullYear(), d.getMonth(), diff, 0, 0, 0, 0);
+}
+
 // ─── Fetchers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -82,22 +100,38 @@ export async function fetchDailySummaries(days = 7): Promise<DailySummary[]> {
 }
 
 /**
- * Fetch total focus minutes completed today (local time).
+ * Fetch total focus minutes and session counts for today (local time).
  */
-export async function fetchTodayFocusMinutes(): Promise<number> {
+export async function fetchTodayFocusStats(): Promise<{ focusMinutes: number; abandonedCount: number; completedCount: number }> {
   const start = localDayStart().toISOString();   // midnight local → ISO
   const end   = localDayEnd().toISOString();     // midnight next day → ISO
 
   const { data, error } = await supabase
     .from('focus_sessions')
-    .select('duration_seconds')
-    .eq('status', 'completed')
+    .select('duration_seconds, status')
     .gte('started_at', start)
     .lt('started_at', end);         // lt end-of-day = correct closed interval
 
-  if (error) return 0;
-  const total = (data ?? []).reduce((sum, s) => sum + (s.duration_seconds ?? 0), 0);
-  return Math.round(total / 60);
+  if (error) return { focusMinutes: 0, abandonedCount: 0, completedCount: 0 };
+  
+  let totalSeconds = 0;
+  let abandonedCount = 0;
+  let completedCount = 0;
+
+  for (const s of (data ?? [])) {
+    if (s.status === 'completed') {
+      totalSeconds += (s.duration_seconds ?? 0);
+      completedCount++;
+    } else if (s.status === 'abandoned') {
+      abandonedCount++;
+    }
+  }
+
+  return { 
+    focusMinutes: Math.round(totalSeconds / 60), 
+    abandonedCount, 
+    completedCount 
+  };
 }
 
 /**
@@ -110,31 +144,60 @@ export async function fetchStreakDays(): Promise<number> {
     .select('started_at')
     .eq('status', 'completed')
     .order('started_at', { ascending: false })
-    .limit(90);  // 90 sessions = safe upper bound for a 60-day streak check
+    .limit(300);
 
   if (error || !data?.length) return 0;
 
-  // Convert each timestamp to local 'YYYY-MM-DD'
   const uniqueDays = new Set(
-    data.map((s) => {
-      const d = new Date(s.started_at);
-      return localDateStr(d);
-    })
+    data.map((s) => localDateStr(new Date(s.started_at)))
   );
 
   let streak = 0;
-  const cursor = new Date();   // today in local time
+  const cursor = new Date();
+
+  // If they haven't completed a session today, check if they completed one yesterday.
+  // If not, their streak is 0.
+  if (!uniqueDays.has(localDateStr(cursor))) {
+    const yesterday = new Date(cursor);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (!uniqueDays.has(localDateStr(yesterday))) {
+      return 0;
+    }
+    // They did it yesterday, so start counting from yesterday
+    cursor.setDate(cursor.getDate() - 1);
+  }
 
   while (true) {
     const key = localDateStr(cursor);
     if (uniqueDays.has(key)) {
       streak++;
-      cursor.setDate(cursor.getDate() - 1);   // go back one local day
+      cursor.setDate(cursor.getDate() - 1);
     } else {
       break;
     }
   }
   return streak;
+}
+
+/**
+ * Fetch the user's Journey Day.
+ * Journey Day = (Today's local date) - (Local date of user's sign up / auth.getUser().created_at) + 1
+ */
+export async function fetchJourneyDay(): Promise<number> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user?.created_at) return 1;
+
+  const createdAt = new Date(data.user.created_at);
+  const today = new Date();
+  
+  // Calculate difference in local days
+  const startDay = new Date(createdAt.getFullYear(), createdAt.getMonth(), createdAt.getDate());
+  const currentDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  
+  const diffTime = Math.abs(currentDay.getTime() - startDay.getTime());
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)); 
+  
+  return diffDays + 1;
 }
 
 /**
@@ -156,13 +219,80 @@ export async function fetchTodayDistractions(): Promise<number> {
   return (data ?? []).reduce((sum, s) => sum + (s.attempt_count ?? 0), 0);
 }
 
+export async function fetchWeeklyFocusStats(weeksAgo = 0): Promise<WeeklyFocusDay[]> {
+  const monday = getLocalMonday();
+  if (weeksAgo > 0) {
+    monday.setDate(monday.getDate() - (weeksAgo * 7));
+  }
+  const nextMonday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000);
+  
+  const startIso = monday.toISOString();
+  const endIso = nextMonday.toISOString();
+
+  const { data, error } = await supabase
+    .from('focus_sessions')
+    .select('started_at, duration_seconds, status')
+    .gte('started_at', startIso)
+    .lt('started_at', endIso);
+    
+  const week: Record<string, WeeklyFocusDay> = {};
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday.getTime() + i * 24 * 60 * 60 * 1000);
+    const dateStr = localDateStr(d);
+    week[dateStr] = {
+      date: dateStr,
+      dayName: DAYS[i],
+      focusMinutes: 0,
+      sessionCount: 0,
+      status: 'upcoming'
+    };
+  }
+  
+  if (!error && data) {
+    for (const session of data) {
+      if (session.status !== 'completed') continue;
+      const d = new Date(session.started_at);
+      const dateStr = localDateStr(d);
+      if (week[dateStr]) {
+        week[dateStr].focusMinutes += Math.round((session.duration_seconds ?? 0) / 60);
+        week[dateStr].sessionCount += 1;
+      }
+    }
+  }
+
+  const todayStr = localDateStr();
+  let pastToday = false;
+  // Hardcoded default daily goal, should ideally come from user profile, but using 60m as default
+  const dailyGoal = 60; 
+
+  const result = Object.values(week).map(day => {
+    if (day.date === todayStr) {
+      pastToday = true;
+      if (day.focusMinutes >= dailyGoal) day.status = 'completed';
+      else if (day.focusMinutes > 0) day.status = 'in_progress';
+      else day.status = 'upcoming'; 
+    } else if (!pastToday) {
+      if (day.focusMinutes >= dailyGoal) day.status = 'completed';
+      else day.status = 'missed';
+    } else {
+      day.status = 'upcoming';
+    }
+    return day;
+  });
+  
+  return result;
+}
+
 // ─── Derived stats ────────────────────────────────────────────────────────────
 
 export function deriveTodayStats(
   summaries:       DailySummary[],
-  focusMinutes:    number,
+  focusStats:      { focusMinutes: number; abandonedCount: number; completedCount: number },
   streakDays:      number,
   blockedAttempts: number,
+  journeyDay:      number,
 ): TodayStats {
   const todayStr   = localDateStr();
   // summaries is newest-first; find today's and yesterday's explicitly
@@ -197,11 +327,14 @@ export function deriveTodayStats(
 
   return {
     screenTimeMinutes,
-    focusMinutes,
+    focusMinutes:      focusStats.focusMinutes,
     pickups:           today?.session_count ?? 0,
     distractions:      blockedAttempts,
+    abandonedCount:    focusStats.abandonedCount,
+    completedCount:    focusStats.completedCount,
     cookedScore,
     streakDays,
+    journeyDay,
     changeVsYesterday,
     topApp,
   };

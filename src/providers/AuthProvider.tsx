@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { BackHandler } from 'react-native';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useRouter, useSegments } from 'expo-router';
@@ -59,28 +60,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       routerRef.current.replace('/permission');
       return;
     }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user && !user.user_metadata?.name) {
+      routerRef.current.replace('/setup-name');
+      return;
+    }
+
     if (!(await hasCompletedOnboarding().catch(() => true))) {
       routerRef.current.replace('/onboarding');
       return;
     }
 
-    // Startup recovery (spec item 8): ask the DB — not any local/cached
-    // flag — whether a focus session is actually still open. This does NOT
-    // by itself verify the Android native blocking service is still running
-    // for that session: FocusScreen re-issues the native start call on
-    // mount, but whether the native module handles that safely for an
-    // already-active session is unverified on-device (see focus.tsx). A
-    // failed lookup (offline, etc.) must never be read as "a session is
-    // active" — it falls through to Home like any other user.
+    // Startup recovery: ask the DB whether a focus session is actually still
+    // open. A failed lookup falls through to the dashboard like any other user.
     const { session } = await getActiveFocusSession().catch(() => ({ session: null }));
     if (session) {
       routerRef.current.replace({ pathname: '/(tabs)/focus', params: { ready: '1', sessionId: session.id } });
     } else {
+      // Always land on the dashboard — never auto-launch onboarding or focus
       routerRef.current.replace('/(tabs)/today');
     }
 
-    // Refresh screen-time data in the background — doesn't block navigation,
-    // and keeps returning users' stats current instead of stuck at first sync.
+    // Refresh screen-time data in the background
     runIncrementalSync().catch(() => {});
   }
 
@@ -101,12 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: userData, error } = await supabase.auth.getUser();
 
       if (error && !isInvalidSessionError(error) && !userData?.user) {
-        // getUser() failed, but NOT because the token is actually invalid —
-        // most likely offline or a flaky connection. The previous version
-        // treated this the same as an invalid session and signed the user
-        // out, so opening the app with no signal logged everyone out.
-        // Trust the cached session for now; it gets re-verified next launch
-        // (or the moment a real 401/403 comes back from any other call).
+        // getUser() failed, but NOT because the token is actually invalid.
+        // Trust the cached session for now.
         setSession(cachedSession);
         setLoading(false);
         if (routedForUserId.current !== cachedSession.user.id) {
@@ -115,8 +113,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else if (error || !userData?.user) {
         // Genuinely invalid session (token revoked, user deleted, ...).
-        // scope: 'local' only clears this device — signing in on a phone
-        // should not silently sign the user out of a tablet or the web app.
         setSession(null);
         setLoading(false);
         await supabase.auth.signOut({ scope: 'local' });
@@ -137,7 +133,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for subsequent auth state changes (e.g. login, logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, s) => {
       // Ignore INITIAL_SESSION here since we handle it explicitly above with verification.
-      // Calling auth methods inside INITIAL_SESSION can cause infinite recursion loops.
       if (event === 'INITIAL_SESSION') return;
 
       setSession(s);
@@ -171,12 +166,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       segments[0] === 'circles' ||
       segments[0] === 'focus-setup' ||
       segments[0] === 'focus' ||
-      segments[0] === 'roast';
+      segments[0] === 'roast' ||
+      segments[0] === 'setup-name';
+
+    const onAuth = segments[0] === undefined || segments[0] === 'login' || segments[0] === 'verify';
 
     if (!session && inApp) {
+      // Not logged in but on an app screen → kick to auth
       router.replace('/');
+    } else if (session && onAuth) {
+      // Logged in but somehow on an auth screen (e.g. Android Back) →
+      // push them back into the app without re-running the full route flow.
+      // This prevents the "stuck after Back + re-login" bug.
+      router.replace('/(tabs)/today');
     }
   }, [session, isLoading, segments, router]);
+
+  // ── Prevent Android Back from escaping the authenticated app ──────────────
+  // When the user is on the dashboard (tabs), pressing Back should exit the
+  // app, NOT navigate back to the auth stack. Without this, Back from the
+  // dashboard popped the stack to the signup screen, creating a broken state
+  // where re-login couldn't route back to the dashboard because
+  // routedForUserId was still set.
+  useEffect(() => {
+    if (isLoading || !session) return;
+
+    const isOnTabs = segments[0] === '(tabs)';
+    if (!isOnTabs) return;
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Let the OS handle the back press (minimize the app)
+      BackHandler.exitApp();
+      return true;
+    });
+    return () => sub.remove();
+  }, [isLoading, session, segments]);
 
   return (
     <AuthContext.Provider value={{ session, isLoading }}>

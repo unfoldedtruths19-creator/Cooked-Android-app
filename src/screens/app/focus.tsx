@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   AccessibilityInfo,
+  ActivityIndicator,
   Animated,
   AppState,
   Easing,
@@ -14,7 +15,7 @@ import {
   BackHandler,
 } from 'react-native';
 
-import { GhostButton, Screen } from '@/components/app/ui';
+import { GhostButton, PrimaryButton, Screen } from '@/components/app/ui';
 import { colors, font, radius, space } from '@/theme/tokens';
 import { getActiveFocusSession, abandonFocusSession, completeFocusSession, pauseFocusSession, resumeFocusSession, syncFocusAttempts, type FocusSession } from '@/lib/focus';
 import { useFocusSession } from '@/state/useFocusSession';
@@ -81,7 +82,7 @@ export function FocusScreen() {
   // what its numbers are. This screen never invents a session id or a
   // started_at — it always fetches the real row first. `null` = "checked,
   // and there is no open session" (not the same as still-loading).
-  const [session, setSession]     = useState<FocusSession | null | 'loading'>('loading');
+  const [session, setSession]     = useState<FocusSession | null | 'loading' | 'error'>('loading');
   const [remaining, setRemaining] = useState(0);
   const [running, setRunning]     = useState(false);
   const [startFailed, setStartFailed] = useState(false);
@@ -98,7 +99,7 @@ export function FocusScreen() {
   // can recover it (best-effort — failures here must never interrupt the
   // session itself, so errors are swallowed).
   useEffect(() => {
-    if (!session || session === 'loading') return;
+    if (!session || session === 'loading' || session === 'error') return;
     syncFocusAttempts(session.id, attemptCount).catch(() => {});
   }, [session, attemptCount]);
 
@@ -107,43 +108,43 @@ export function FocusScreen() {
   // always ask the DB what's actually open (see the fetch effect below).
 
   // ── Fetch the real session — never create one here ──────────────────────────
+  const loadSession = useCallback(async () => {
+    setSession('loading');
+    const { session: s, error } = await getActiveFocusSession();
+    if (error) {
+      setSession('error');
+      return;
+    }
+    if (!s) {
+      setSession(null);
+      return;
+    }
+    setSession(s);
+    setTask(s.task ?? '');
+    setBlockedApps(s.blocked_apps ?? []);
+    setAllowBrowser(!!s.allow_browser);
+    setRemaining(s.remaining_seconds);
+    if (s.is_paused) {
+      // Recovered into an already-paused session (e.g. app was killed
+      // while paused): don't anchor a ticking end time or the countdown
+      // would resume on its own. `running` starts false; the "start
+      // native blocking" effect below still re-issues the native start
+      // call (blocking itself isn't paused, only the timer/reward is),
+      // but leaves the JS timer stopped until the user taps Resume.
+      endAtRef.current = null;
+      setRunning(false);
+    } else {
+      endAtRef.current = Date.now() + s.remaining_seconds * 1000;
+    }
+  }, [setTask, setBlockedApps, setAllowBrowser]);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { session: s, error } = await getActiveFocusSession();
-      if (cancelled) return;
-      if (error || !s) {
-        // No open DB session: a stale tab, settings sync, or a session that
-        // already ended elsewhere. Never fall back to starting one here.
-        setSession(null);
-        router.replace('/focus-setup');
-        return;
-      }
-      setSession(s);
-      setTask(s.task ?? '');
-      setBlockedApps(s.blocked_apps ?? []);
-      setAllowBrowser(!!s.allow_browser);
-      setRemaining(s.remaining_seconds);
-      if (s.is_paused) {
-        // Recovered into an already-paused session (e.g. app was killed
-        // while paused): don't anchor a ticking end time or the countdown
-        // would resume on its own. `running` starts false; the "start
-        // native blocking" effect below still re-issues the native start
-        // call (blocking itself isn't paused, only the timer/reward is),
-        // but leaves the JS timer stopped until the user taps Resume.
-        endAtRef.current = null;
-        setRunning(false);
-      } else {
-        endAtRef.current = Date.now() + s.remaining_seconds * 1000;
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.sessionId]);
+    loadSession();
+  }, [params.sessionId, loadSession]);
 
   // ── End session (abandon = user quit early; natural = duration reached) ─────
   const handleEnd = useCallback(async (naturally: boolean) => {
-    if (isEnding.current || !session || session === 'loading') return;
+    if (isEnding.current || !session || session === 'loading' || session === 'error') return;
     isEnding.current = true;
     setRunning(false);
 
@@ -170,6 +171,8 @@ export function FocusScreen() {
       params: {
         attemptCount:      String(finalAttempts),
         sessionDurationMs: String(result.duration_seconds * 1000),
+        plannedDurationMs: String(result.planned_duration_seconds * 1000),
+        abandoned:         naturally ? '0' : '1',
         lastAttemptApp:    nativeSummary.lastAttemptApp,
         lastWasBrowser:    nativeSummary.lastWasBrowser ? '1' : '0',
         task:              result.task ?? '',
@@ -179,7 +182,7 @@ export function FocusScreen() {
 
   // ── Start native blocking once we know the real session ─────────────────────
   useEffect(() => {
-    if (session == null || session === 'loading') return;
+    if (session == null || session === 'loading' || session === 'error') return;
     (async () => {
       // Re-issued on every mount, including a recovery mount after the app
       // (and native process) was killed — CookedScreenTime.startFocusSession
@@ -259,7 +262,7 @@ export function FocusScreen() {
   // authoritative — the local endAtRef is just re-anchored to match them.
   const isTogglingRef = useRef(false);
   async function toggle() {
-    if (isTogglingRef.current || !session || session === 'loading') return;
+    if (isTogglingRef.current || !session || session === 'loading' || session === 'error') return;
     isTogglingRef.current = true;
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
@@ -287,7 +290,42 @@ export function FocusScreen() {
     }
   }
 
-  if (session === 'loading' || session === null) return null; // fetch effect redirects when null
+  if (session === 'loading') {
+    return (
+      <Screen style={{ flex: 1, paddingBottom: space.xl, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={colors.mint} />
+      </Screen>
+    );
+  }
+
+  if (session === 'error') {
+    return (
+      <Screen style={{ flex: 1, paddingBottom: space.xl, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={[styles.taskText, { textAlign: 'center', marginBottom: space.md, color: colors.ember }]}>
+          Couldn't load your session.
+        </Text>
+        <PrimaryButton
+          label="Retry"
+          onPress={loadSession}
+        />
+      </Screen>
+    );
+  }
+
+  if (session === null) {
+    return (
+      <Screen style={{ flex: 1, paddingBottom: space.xl, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={[styles.taskText, { textAlign: 'center', marginBottom: space.lg, color: colors.textDim }]}>
+          No active session.
+        </Text>
+        <PrimaryButton
+          label="START FOCUS"
+          icon={{ ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }}
+          onPress={() => router.replace('/focus-setup')}
+        />
+      </Screen>
+    );
+  }
 
   return (
     <Screen style={styles.screen}>
