@@ -1,4 +1,4 @@
-import { BlurView } from 'expo-blur';
+﻿import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { useRef, type ReactNode } from 'react';
 import {
@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppBackground } from '@/components/app/app-background';
 import { blur, colors, font, radius, space } from '@/theme/tokens';
+import { LEGAL_URLS, openLegalUrl } from '@/lib/legal';
 
 type AuthShellProps = {
   title: string;
@@ -103,6 +104,39 @@ export function AuthShell({
                 )}
               </View>
             ) : null}
+
+            {/* Unauthenticated Legal & Support Links */}
+            <View style={styles.legalFooter}>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="Terms of Service"
+                hitSlop={8}
+                onPress={() => openLegalUrl(LEGAL_URLS.terms)}
+                style={({ pressed }) => (pressed ? styles.footerPressed : null)}
+              >
+                <Text style={styles.legalLink}>Terms of Service</Text>
+              </Pressable>
+              <Text style={styles.legalDot}>•</Text>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="Privacy Policy"
+                hitSlop={8}
+                onPress={() => openLegalUrl(LEGAL_URLS.privacy)}
+                style={({ pressed }) => (pressed ? styles.footerPressed : null)}
+              >
+                <Text style={styles.legalLink}>Privacy Policy</Text>
+              </Pressable>
+              <Text style={styles.legalDot}>•</Text>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="Support"
+                hitSlop={8}
+                onPress={() => openLegalUrl(LEGAL_URLS.contact)}
+                style={({ pressed }) => (pressed ? styles.footerPressed : null)}
+              >
+                <Text style={styles.legalLink}>Support</Text>
+              </Pressable>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -190,5 +224,21 @@ const styles = StyleSheet.create({
   },
   footerPressed: {
     opacity: 0.6,
+  },
+  legalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: space.xs,
+    marginTop: -space.xs,
+  },
+  legalLink: {
+    color: colors.muted,
+    fontFamily: font.body,
+    fontSize: 12,
+  },
+  legalDot: {
+    color: colors.muted,
+    fontSize: 10,
   },
 });
